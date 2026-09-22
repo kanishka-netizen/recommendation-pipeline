@@ -28,14 +28,14 @@ In short:
 ```text
 User Interactions
        ↓
-Recommendation
+ Recommendation
        ↓
 Continuous Monitoring
        ↓
-Drift Detection
+ Drift Detection
        ↓
 Challenger Training
        ↓
-Evaluation
+   Evaluation
        ↓
-Promote / Reject
+ Promote/Reject
