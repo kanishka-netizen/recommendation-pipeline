@@ -1,11 +1,16 @@
+import pandas as pd
+
 from pathlib import Path
 
-from src.data.movielens import load_movielens_ratings
+from src.data.movielens import (
+    load_movielens_ratings,
+    get_recent_interactions,
+)
 
 
 def test_load_movielens():
 
-    path = Path("data/ml-1m/ratings.dat")
+    path = Path("data/movielens/ratings.dat")
 
     data = load_movielens_ratings(path)
 
@@ -20,8 +25,29 @@ def test_load_movielens():
 
 def test_reward_conversion():
 
-    path = Path("data/ml-1m/ratings.dat")
+    path = Path("data/movielens/ratings.dat")
 
     data = load_movielens_ratings(path)
 
     assert set(data["reward"].unique()).issubset({0, 1})
+
+def test_recent_interactions():
+
+    path = Path(
+        "data/movielens/ratings.dat"
+    )
+
+    data = load_movielens_ratings(path)
+
+    recent = get_recent_interactions(
+        data,
+        days=30,
+    )
+
+    assert not recent.empty
+
+    assert (
+        recent["timestamp"].min()
+        >= data["timestamp"].max()
+        - pd.Timedelta(days=30)
+    )

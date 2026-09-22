@@ -60,3 +60,35 @@ def load_movielens_ratings(path: str | Path) -> pd.DataFrame:
             "timestamp",
         ]
     ]
+def get_recent_interactions(data, days=30):
+    """
+    Return interactions from the most recent time window.
+
+    Parameters
+    ----------
+    data:
+        Interaction DataFrame containing a timestamp column.
+
+    days:
+        Number of recent days to keep.
+    """
+
+    if data.empty:
+        return data.copy()
+
+    if "timestamp" not in data.columns:
+        raise ValueError(
+            "Interaction data must contain a timestamp column."
+        )
+
+    latest_timestamp = data["timestamp"].max()
+
+    cutoff = latest_timestamp - pd.Timedelta(
+        days=days,
+    )
+
+    recent_data = data[
+        data["timestamp"] >= cutoff
+    ].copy()
+
+    return recent_data

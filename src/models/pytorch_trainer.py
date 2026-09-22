@@ -26,6 +26,7 @@ class PyTorchModelTrainer(ModelTrainer):
 
         self.user_to_index = {}
         self.item_to_index = {}
+        self.user_positive_items = {}
 
     def train(self, data):
         """
@@ -95,6 +96,7 @@ class PyTorchModelTrainer(ModelTrainer):
 
             user_positive_items[user].add(item)
 
+        self.user_positive_items = user_positive_items
         model = TwoTowerRecommender(
             num_users=len(self.user_to_index),
             num_items=len(self.item_to_index),
@@ -233,6 +235,7 @@ class PyTorchModelTrainer(ModelTrainer):
             "user_to_index": self.user_to_index,
             "item_to_index": self.item_to_index,
             "embedding_dim": self.embedding_dim,
+            "user_positive_items": self.user_positive_items,
         }
 
         torch.save(
@@ -255,6 +258,7 @@ class PyTorchModelTrainer(ModelTrainer):
         checkpoint = torch.load(
             path,
             map_location="cpu",
+            weights_only=False,
         )
 
         self.user_to_index = checkpoint[
@@ -263,6 +267,10 @@ class PyTorchModelTrainer(ModelTrainer):
 
         self.item_to_index = checkpoint[
             "item_to_index"
+        ]
+
+        self.user_positive_items = checkpoint[
+            "user_positive_items"
         ]
 
         model = TwoTowerRecommender(
@@ -283,6 +291,8 @@ class PyTorchModelTrainer(ModelTrainer):
     def recommend(self, model, user_id, top_k=10):
         """
         Generate top-K recommendations for a user.
+
+        Items the user has already interacted with are excluded.
         """
 
         if user_id not in self.user_to_index:
@@ -316,15 +326,36 @@ class PyTorchModelTrainer(ModelTrainer):
 
             scores = user_vector @ item_vectors.T
 
-            top_scores, top_indices = torch.topk(
-                scores.squeeze(0),
-                k=min(top_k, len(item_indices)),
-            )
-
+        # Find items already interacted with by this user.
+        #
+        # item_to_index maps:
+        # original item ID -> internal index
+        #
+        # We need the reverse mapping here.
         index_to_item = {
             index: item_id
-            for item_id, index in self.item_to_index.items()
+            for item_id, index
+            in self.item_to_index.items()
         }
+
+        # Remove items the user has already interacted with.
+        consumed_items = self.user_positive_items.get(
+            user_index,
+            set(),
+        )
+
+        for item_index in consumed_items:
+            scores[0, item_index] = float("-inf")
+
+        top_k = min(
+            top_k,
+            len(item_indices),
+        )
+
+        top_scores, top_indices = torch.topk(
+            scores.squeeze(0),
+            k=top_k,
+        )
 
         recommendations = [
             (
