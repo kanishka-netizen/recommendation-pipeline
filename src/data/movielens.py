@@ -83,9 +83,12 @@ def get_recent_interactions(data, days=30):
 
     latest_timestamp = data["timestamp"].max()
 
-    cutoff = latest_timestamp - pd.Timedelta(
-        days=days,
-    )
+    if pd.api.types.is_numeric_dtype(data["timestamp"]):
+        cutoff = latest_timestamp - (days * 24 * 3600)
+    else:
+        cutoff = latest_timestamp - pd.Timedelta(
+            days=days,
+        )
 
     recent_data = data[
         data["timestamp"] >= cutoff

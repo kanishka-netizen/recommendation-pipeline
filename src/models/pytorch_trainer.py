@@ -35,13 +35,25 @@ class PyTorchModelTrainer(ModelTrainer):
 
         Expected columns:
             user_id
-            item_id
+            item_id (or question_id)
             reward
             timestamp
         """
 
         if data.empty:
             raise ValueError("Training data is empty.")
+
+        # Accept question_id as item_id if needed
+        if "question_id" in data.columns and "item_id" not in data.columns:
+            data = data.copy()
+            data["item_id"] = data["question_id"]
+
+        required_cols = {"user_id", "item_id", "reward"}
+        missing_cols = required_cols - set(data.columns)
+        if missing_cols:
+            raise ValueError(
+                f"Training data missing required columns: {sorted(missing_cols)}"
+            )
 
         # Keep only positive interactions.
         positive_data = data[data["reward"] > 0].copy()
@@ -70,6 +82,12 @@ class PyTorchModelTrainer(ModelTrainer):
             for index, item_id in enumerate(items)
         }
 
+        num_items = len(self.item_to_index)
+        if num_items <= 1:
+            raise ValueError(
+                f"Negative sampling requires at least 2 distinct items, but found {num_items}."
+            )
+
         # Convert interactions into integer tensors.
         user_ids = torch.tensor(
             [
@@ -97,6 +115,16 @@ class PyTorchModelTrainer(ModelTrainer):
             user_positive_items[user].add(item)
 
         self.user_positive_items = user_positive_items
+
+        # Explicit failure condition: verify that every user has at least one unobserved item
+        for user_idx, interacted_items in user_positive_items.items():
+            if len(interacted_items) >= num_items:
+                orig_user_id = users[user_idx]
+                raise ValueError(
+                    f"User {orig_user_id} has interacted with all {num_items} available items; "
+                    "negative sampling cannot be performed."
+                )
+
         model = TwoTowerRecommender(
             num_users=len(self.user_to_index),
             num_items=len(self.item_to_index),
@@ -111,7 +139,6 @@ class PyTorchModelTrainer(ModelTrainer):
         model.train()
 
         dataset_size = len(user_ids)
-        num_items = len(self.item_to_index)
 
         for epoch in range(self.epochs):
 
@@ -157,8 +184,17 @@ class PyTorchModelTrainer(ModelTrainer):
                     dtype=torch.bool,
                 )
 
-                # Resample invalid negatives.
+                # Resample invalid negatives with bounded retry limit.
+                max_resample_attempts = 100
+                resample_attempts = 0
+
                 while invalid.any():
+                    resample_attempts += 1
+                    if resample_attempts >= max_resample_attempts:
+                        raise RuntimeError(
+                            f"Negative sampling exceeded maximum attempts ({max_resample_attempts}). "
+                            "One or more users have too few unobserved items to sample valid negatives."
+                        )
 
                     count = invalid.sum().item()
 
@@ -347,14 +383,18 @@ class PyTorchModelTrainer(ModelTrainer):
         for item_index in consumed_items:
             scores[0, item_index] = float("-inf")
 
-        top_k = min(
+        available_items = len(item_indices) - len(consumed_items)
+        if available_items <= 0 or top_k <= 0:
+            return []
+
+        effective_k = min(
             top_k,
-            len(item_indices),
+            available_items,
         )
 
         top_scores, top_indices = torch.topk(
             scores.squeeze(0),
-            k=top_k,
+            k=effective_k,
         )
 
         recommendations = [
