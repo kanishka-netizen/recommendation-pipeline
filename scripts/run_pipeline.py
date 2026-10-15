@@ -54,6 +54,7 @@ pipeline = RecommendationPipeline(
     model_trainer=trainer,
     evaluator=evaluator,
     challenger_path=str(CHALLENGER_PATH),
+    champion_path=str(CHAMPION_PATH),
     recent_days=30,
 )
 result = pipeline.run(
