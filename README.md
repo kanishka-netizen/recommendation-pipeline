@@ -1,52 +1,66 @@
-# recommendation-pipeline
+# Recommendation Pipeline
 
-A Python machine-learning pipeline that trains a PyTorch two-tower recommender,
-detects data drift, retrains a challenger model on recent interactions, evaluates
-the champion against the challenger, and promotes the challenger atomically when
-it is statistically better.
+An adaptive recommendation system that learns from user interactions, detects changes in user behaviour, and updates the recommendation model when needed.
 
----
+This project is being developed as part of an academic project on an adaptive, drift-aware recommendation pipeline. It aims to recommend quizzes based on users' previous interactions and preferences while monitoring behavioural changes and updating the model when appropriate.
+
+## What are we building?
+
+The system is designed to:
+
+1. Collect user interaction data.
+2. Generate recommendations.
+3. Continuously monitor incoming interactions.
+4. Detect data or performance drift.
+5. Retrain a challenger model using recent data.
+6. Evaluate the challenger against the existing model.
+7. Promote the challenger only when it shows significant improvement.
+8. Track the model lifecycle through monitoring.
+
+```text
+User Interactions
+       ↓
+  Recommendation
+       ↓
+Continuous Monitoring
+       ↓
+  Drift Detection
+       ↓
+Challenger Training
+       ↓
+    Evaluation
+       ↓
+  Promote/Reject
+```
 
 ## Project layout
 
-```
+```text
 scripts/
-  train_model.py          Trains and saves the initial champion checkpoint.
-  run_pipeline.py         Runs the full pipeline end-to-end.
-  retrain_recent.py       Standalone script: retrain on recent data only.
-  test_recommendations.py Quick sanity check for the saved model.
+  train_model.py          Trains the initial model.
+  run_pipeline.py         Runs the pipeline end-to-end.
+  retrain_recent.py       Retrains on recent data.
+  test_recommendations.py Checks saved-model recommendations.
 
 src/
-  pipeline.py             RecommendationPipeline orchestrator.
-  data/
-    movielens.py          Loads MovieLens ratings; get_recent_interactions.
-    loader.py             Generic CSV loader for quiz interaction data.
-  drift/
-    detector.py           KSNumericalDriftDetector (KS two-sample test).
-  evaluation/
-    evaluator.py          ModelEvaluator: paired Hit Rate@K + bootstrap test.
-  models/
-    two_tower.py          TwoTowerRecommender (PyTorch nn.Module).
-    pytorch_trainer.py    PyTorchModelTrainer: train / save / load / recommend.
-    trainer.py            Abstract ModelTrainer interface.
-  quiz/
-    quiz_core.py          Question, QuizSession - quiz delivery and scoring.
-    interaction_events.py Schema, record_interaction, append_interactions.
-    data_generator.py     Synthetic quiz data generator for testing.
+  pipeline.py             Recommendation pipeline orchestrator.
+  data/                   Interaction data loading.
+  drift/                  Drift detection.
+  evaluation/             Model evaluation.
+  models/                 Recommendation models and trainers.
+  quiz/                   Quiz delivery, scoring, and interaction events.
 
-tests/                    Automated test suite (pytest).
-data/movielens/           Place ratings.dat here before running scripts.
-artifacts/                Saved model checkpoints (.pt files).
+tests/                    Automated test suite.
+data/movielens/           MovieLens ratings data.
+artifacts/                Saved model checkpoints.
 docs/                     Schema and module documentation.
 ```
-
----
 
 ## Quick start
 
 ### 1. Install dependencies
 
-```
+```bash
 pip install -r requirements.txt
 ```
 
@@ -54,84 +68,42 @@ pip install -r requirements.txt
 
 Download MovieLens 1M and place `ratings.dat` at `data/movielens/ratings.dat`.
 
-### 3. Train the initial champion
+### 3. Train the initial model
 
-```
+```bash
 python -m scripts.train_model
 ```
 
-This trains on the **oldest 80%** of interactions (chronologically sorted) and
-saves the model to `artifacts/challenger.pt`.  Training on the pre-evaluation
-window prevents data leakage into the champion checkpoint.
+The training script should use the oldest 80% of interactions in chronological order to prevent data leakage into the evaluation window.
 
 ### 4. Run the pipeline
 
-```
+```bash
 python -m scripts.run_pipeline
 ```
 
-The pipeline:
-1. Splits data into reference (oldest 80%) and current (newest 20%).
-2. Splits current into training_current (80%) and evaluation (20%).
-3. Detects drift between reference and current using the KS test.
-4. If drift is detected, retrains a challenger on recent interactions from
-   training_current.
-5. Evaluates champion vs challenger on the held-out evaluation set using
-   paired Hit Rate@K and a paired bootstrap significance test.
-6. If the challenger is statistically better, atomically promotes it by
-   overwriting the champion checkpoint.
+The intended workflow is to split historical and recent interactions chronologically, detect drift, train a challenger when appropriate, evaluate it on held-out data, and promote it only when the configured evaluation criteria are satisfied.
 
 ### 5. Run the tests
 
-```
+```bash
 python -m pytest tests/ -v
 ```
 
-Expected: **68 tests pass**.
+## Data leakage safeguards
 
----
+Chronological splitting helps prevent future interactions from leaking into training data used to evaluate model performance.
 
-## Data leakage guarantee
-
-The champion checkpoint (`artifacts/challenger.pt`) is trained in
-`scripts/train_model.py` using only the **oldest 80% of all interactions**.
-The pipeline uses the **newest 20%** for challenger training (recent window)
-and evaluation (held-out window).  These windows never overlap.
-
-Regression tests in `tests/test_leakage.py` verify this chronological
-separation automatically on every test run.
-
----
+The leakage regression tests should verify that training and evaluation windows remain separate.
 
 ## Model promotion
 
-When the pipeline promotes the challenger, it:
-1. Writes the new checkpoint to `<champion_path>.tmp` first.
-2. Atomically renames the temp file over the champion path.
-
-The old champion file is never deleted until the replacement is fully written.
-If the write fails, the temp file is cleaned up and the original is preserved.
-
----
+When atomic promotion is enabled, the new checkpoint should be written to a temporary file before replacing the champion checkpoint. This helps preserve the existing model if writing the replacement fails.
 
 ## Quiz data support
 
-The pipeline accepts quiz interaction data in addition to MovieLens data.
-Quiz interactions use `question_id` (mapped to `item_id` automatically) and
-the same `user_id`, `reward`, `timestamp` schema.  See
-`docs/interaction_schema.md` for the full column reference and
-`docs/quiz_module.md` for the quiz module guide.
-
----
+The pipeline is intended to support quiz interactions alongside recommendation data. See `docs/interaction_schema.md` and `docs/quiz_module.md` for the relevant schemas and module documentation.
 
 ## Configuration
 
-Key parameters in `scripts/run_pipeline.py`:
-
-| Variable | Default | Description |
-|---|---|---|
-| `DATA_PATH` | `data/movielens/ratings.dat` | Interaction data file |
-| `CHAMPION_PATH` | `artifacts/challenger.pt` | Champion checkpoint |
-| `CHALLENGER_PATH` | `artifacts/challenger_recent.pt` | Challenger checkpoint |
-| `recent_days` | `30` | Window for recent interactions used in challenger training |
-| `top_k` | `10` | Hit Rate@K cutoff |
+Review `scripts/run_pipeline.py` for the configured data paths, model checkpoint paths, recent-interaction window, and recommendation cutoff.
